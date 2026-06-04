@@ -19,10 +19,16 @@ defmodule Mongo.Auth.SCRAM do
     result =
       with {:ok, _flags, %{"ok" => ok} = reply} when ok == 1 <- Utils.command(-3, message, s),
            {message, signature} = first(reply, first_bare, username, password, nonce, digest),
-           {:ok, _flags, %{"ok" => ok} = reply} when ok == 1 <- Utils.command(-4, message, s),
-           message = second(reply, signature),
-           {:ok, _flags, %{"ok" => ok} = reply} when ok == 1 <- Utils.command(-5, message, s),
-           do: final(reply)
+           {:ok, _flags, %{"ok" => ok} = reply} when ok == 1 <- Utils.command(-4, message, s) do
+        if reply["done"] do
+          verify_server_signature(reply, signature)
+        else
+          message = second(reply, signature)
+          with {:ok, _flags, %{"ok" => ok} = reply} when ok == 1 <- Utils.command(-5, message, s) do
+            final(reply)
+          end
+        end
+      end
 
     case result do
       :ok ->
@@ -63,6 +69,12 @@ defmodule Mongo.Auth.SCRAM do
   end
 
   defp final(%{"conversationId" => _, "payload" => %BSON.Binary{binary: ""}, "done" => true}) do
+    :ok
+  end
+
+  defp verify_server_signature(%{"payload" => payload}, signature) do
+    params = parse_payload(payload)
+    ^signature = params["v"] |> Base.decode64!()
     :ok
   end
 
